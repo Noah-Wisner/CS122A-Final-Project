@@ -1,7 +1,7 @@
 
 #include "spi_display.h"
 #include "lv_conf.h"
-#include "lvgl_clock.h"
+#include "cs122_app.h"
 #include "lvgl_touch.h"
 
 #include <lvgl.h>
@@ -63,7 +63,7 @@ int main(void) {
 	spi_display.begin();
 	spi_display.clear();
 
-    ucr::bcoe::cs::cs122::LVGL_Clock app(&spi_display, cs122_flush_cb_partial, cs122_get_millis);
+    ucr::bcoe::cs::cs122::CS122_App app(&spi_display, cs122_flush_cb_partial, cs122_get_millis);
     touch_init(26, 21, 27, 22);
     app.run();
 }
