@@ -24,7 +24,7 @@ if (EXISTS ${picoVscode})
 endif()
 # ====================================================================================
 
-set(PICO_BOARD pico CACHE STRING "Board type")
+set(PICO_BOARD pico2_w CACHE STRING "Board type")
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
@@ -41,6 +41,7 @@ pico_sdk_init()
 # Add executable. Default name is the project name, version 0.1
 add_executable(${PROJECT_NAME} 
     src/main.cpp
+    src/menu_manager.cpp
 )
 
 pico_set_program_name(${PROJECT_NAME} "${PROJECT_NAME}")

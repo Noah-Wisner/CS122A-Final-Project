@@ -3,26 +3,71 @@
 
 #include "FreeRTOS.h"
 #include "task.h"
+#include "menu_manager.h"
 
-/* Example Application Tasks */
-void firstTask(void *pvParameters)
+
+#define LED_PIN 16
+
+void ledTask(void *pvParameters)
 {
+    gpio_init(LED_PIN);
+    gpio_set_dir(LED_PIN, GPIO_OUT);
+
     while (true) {
-        printf("First task\n");
+        gpio_put(LED_PIN, 1);
+        printf("LED on\n");
+        vTaskDelay(pdMS_TO_TICKS(500));
+
+        gpio_put(LED_PIN, 0);
+        printf("LED off\n");
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+void spiTask(void *pvParameters)
+{
+    // SPI communication code would go here
+    while (true) {
+        // Simulate SPI work
+        printf("SPI task running\n");
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
-
-void secondTask(void *pvParameters)
+void canTask(void *pvParameters)
 {
+    // CAN communication code would go here
     while (true) {
-        printf("Second task\n");
-        vTaskDelay(pdMS_TO_TICKS(950));
+        // Simulate CAN work
+        printf("CAN task running\n");
+        vTaskDelay(pdMS_TO_TICKS(1500));
     }
 }
-/* End of Example Application Tasks */
+void UIrenderTask(void *pvParameters)
+{
+    menuManager_init();
 
-/* Hardware Setup */
+    while (true) {
+        MenuState state = menuManager_getState();
+
+        // Stub: just log — replace with lv_label_set_text() etc. later
+        printf("[UI] Selected: %s  (open=%d)\n",
+               menuManager_getItemLabel(state.selectedItem),
+               state.isOpen);
+
+        // TODO: call lv_task_handler() here once LVGL is wired up
+
+        vTaskDelay(pdMS_TO_TICKS(33)); // ~30fps refresh budget
+    }
+}
+void sensorTask(void *pvParameters)
+{
+    // Sensor reading code would go here
+    while (true) {
+        // Simulate sensor reading work
+        printf("Sensor task running\n");
+        vTaskDelay(pdMS_TO_TICKS(2500));
+    }
+}
+
 void prvSetupHardware(void)
 {
     stdio_init_all();
@@ -30,27 +75,35 @@ void prvSetupHardware(void)
 
 int main()
 {
-    /* Perform any hardware setup necessary. */
     prvSetupHardware();
 
-    /* Example Application Tasks */
-    auto result1 = xTaskCreate(firstTask, "First Task", 1024, NULL, 1, NULL);
-    if (result1 != pdPASS) {
-        printf("Failed to create task\n");
-        return 1;
-    }
-    
-    auto result = xTaskCreate(secondTask, "Second Task", 1024, NULL, 1, NULL);
+    auto result = xTaskCreate(ledTask, "LED Task", 1024, NULL, 1, NULL);
     if (result != pdPASS) {
-        printf("Failed to create task\n");
+        printf("Failed to create LED task\n");
         return 1;
     }
-    /* End of Example Application Tasks */
-
-    /* Start the created tasks running. */
+    result = xTaskCreate(spiTask, "SPI Task", 1024, NULL, 3, NULL);
+    if (result != pdPASS) {
+        printf("Failed to create SPI task\n");
+        return 1;
+    }
+    result = xTaskCreate(canTask, "CAN Task", 1024, NULL, 4, NULL);
+    if (result != pdPASS) {
+        printf("Failed to create CAN task\n");
+        return 1;
+    }
+    result = xTaskCreate(UIrenderTask, "UI Render Task", 1024, NULL, 2, NULL);
+    if (result != pdPASS) {
+        printf("Failed to create UI render task\n");
+        return 1;
+    }
+    result = xTaskCreate(sensorTask, "Sensor Task", 1024, NULL, 3, NULL);
+    if (result != pdPASS) {
+        printf("Failed to create sensor task\n");
+        return 1;
+    }
     vTaskStartScheduler(); // Does not return
 
-    /* Execution will only reach here if there was insufficient heap to start the scheduler. */
     for (;;);
     return 0;
 }
