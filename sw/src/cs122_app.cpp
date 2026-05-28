@@ -31,7 +31,7 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
 
         //label
         lv_obj_t * label = lv_label_create(lv_screen_active());
-        lv_label_set_text(label, "SECURITY SYSTEM");
+        lv_label_set_text(label, "KEYPAD");
         lv_obj_set_style_text_color(lv_screen_active(), lv_color_hex(0xffffff), LV_PART_MAIN);
         lv_obj_align(label, LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
 
@@ -39,7 +39,7 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
         const int key_height = 30;
         
         const int start_x = 10;
-        const int start_y = 10;
+        const int start_y = 100;
 
         const int spacing = 5;
 
