@@ -2,8 +2,6 @@
 #include "spi_display.h"
 #include <pico/time.h>
 
-#include "FreeRTOS.h"
-#include "task.h"
 
 namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
     CS122_App::CS122_App(SPIDisplay *spi_disp, lv_display_flush_cb_t fcallback, lv_tick_get_cb_t tcallback) :

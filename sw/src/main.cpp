@@ -125,40 +125,40 @@ int main()
 
     BaseType_t result;
 
-    // result = xTaskCreate(ledTask,"LED Task", 1024, NULL, 1, NULL);
-
-    // if (result != pdPASS)
-    // {
-    //     printf("Failed to create LED task\n");
-    // }
-
-    // result = xTaskCreate(spiTask,"SPI Task",1024,NULL,3,NULL);
-
-    // if (result != pdPASS)
-    // {
-    //     printf("Failed to create SPI task\n");
-    // }
-
-    // result = xTaskCreate(canTask,"CAN Task",1024,NULL,4,NULL);
-
-    // if (result != pdPASS)
-    // {
-    //     printf("Failed to create CAN task\n");
-    // }
-
-    // result = xTaskCreate(sensorTask,"Sensor Task",1024,NULL,3,NULL);
-
-    // if (result != pdPASS)
-    // {
-    //     printf("Failed to create sensor task\n");
-    // }
-
-    result = xTaskCreate(UIrenderTask,"UI Render Task",4096,NULL,2,NULL);
+    result = xTaskCreate(ledTask,"LED Task", 1024, NULL, 1, NULL);
 
     if (result != pdPASS)
     {
-        printf("Failed to create UI task\n");
+        printf("Failed to create LED task\n");
     }
+
+    result = xTaskCreate(spiTask,"SPI Task",1024,NULL,3,NULL);
+
+    if (result != pdPASS)
+    {
+        printf("Failed to create SPI task\n");
+    }
+
+    result = xTaskCreate(canTask,"CAN Task",1024,NULL,4,NULL);
+
+    if (result != pdPASS)
+    {
+        printf("Failed to create CAN task\n");
+    }
+
+    result = xTaskCreate(sensorTask,"Sensor Task",1024,NULL,3,NULL);
+
+    if (result != pdPASS)
+    {
+        printf("Failed to create sensor task\n");
+    }
+
+    // result = xTaskCreate(UIrenderTask,"UI Render Task",4096,NULL,2,NULL);
+
+    // if (result != pdPASS)
+    // {
+    //     printf("Failed to create UI task\n");
+    // }
 
     printf("Starting scheduler...\n");
 
