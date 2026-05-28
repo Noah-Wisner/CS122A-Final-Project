@@ -10,7 +10,7 @@ namespace ucr { namespace bcoe {
     class CS122_App {
     public:
         CS122_App(SPIDisplay *spi_disp, lv_display_flush_cb_t fcallback, lv_tick_get_cb_t tcallback);
-        virtual uint32_t run() = 0;
+        virtual uint32_t run();
 
     private:
         SPIDisplay *spi_display;

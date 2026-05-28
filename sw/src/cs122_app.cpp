@@ -2,6 +2,9 @@
 #include "spi_display.h"
 #include <pico/time.h>
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
     CS122_App::CS122_App(SPIDisplay *spi_disp, lv_display_flush_cb_t fcallback, lv_tick_get_cb_t tcallback) :
         spi_display(spi_disp), flush_callback(fcallback), tick_callback(tcallback), running(false) {
@@ -29,7 +32,6 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
         running = true;
         while(running) {
             lv_timer_handler();
-            sleep_ms(5);  /*Wait 5 milliseconds before processing LVGL timer again*/
         }
         return 0;
     }
