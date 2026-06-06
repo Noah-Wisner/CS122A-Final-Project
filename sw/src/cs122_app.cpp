@@ -25,40 +25,95 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
         lv_display_set_flush_cb(display, flush_callback);
     }
 
-    uint32_t CS122_App::run() {
-        //background color
-        lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x003a57), LV_PART_MAIN);
 
-        //label
-        lv_obj_t * label = lv_label_create(lv_screen_active());
-        lv_label_set_text(label, "KEYPAD");
-        lv_obj_set_style_text_color(lv_screen_active(), lv_color_hex(0xffffff), LV_PART_MAIN);
-        lv_obj_align(label, LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
+    uint32_t CS122_App::run() 
+    {
+        create_ui();
 
-        const int key_width = 30;
-        const int key_height = 30;
-        
-        const int start_x = 10;
-        const int start_y = 100;
+        show_dashboard();
 
-        const int spacing = 5;
-
-        int number = 1;
-
-        //keypad
-        for (int row = 0; row < 3; row++)
-        {
-            for (int col = 0; col < 3; col++)
-            {
-                lv_obj_t * btn = lv_button_create(lv_screen_active());
-                lv_obj_set_size(btn, key_width, key_height);
-
-                lv_obj_set_pos(btn, start_x + col * (key_width + spacing), start_y + row * (key_height + spacing));
-            }
-        }
         return loop();
     }
 
+    void CS122_App::create_ui()
+    {
+        lv_obj_set_style_bg_color(
+        lv_screen_active(),
+        lv_color_hex(0x003a57),
+        LV_PART_MAIN
+    );
+
+        create_top_bar();
+        create_content_area();
+        create_nav_bar();
+    }
+
+
+    void CS122_App::create_top_bar()
+    {
+        top_bar = lv_obj_create(lv_screen_active());
+
+        lv_obj_set_size(top_bar, 480, 40);
+        lv_obj_set_pos(top_bar, 0, 0);
+
+        state_label = lv_label_create(top_bar);
+        lv_label_set_text(state_label, "DISARMED");
+        lv_obj_align(state_label, LV_ALIGN_LEFT_MID, 10, 0);
+
+        time_label = lv_label_create(top_bar);
+        lv_label_set_text(time_label, "14:03");
+        lv_obj_align(time_label, LV_ALIGN_CENTER, 0, 0);
+
+        alert_label = lv_label_create(top_bar);
+        lv_label_set_text(alert_label, "Alerts: 0");
+        lv_obj_align(alert_label, LV_ALIGN_RIGHT_MID, -10, 0);
+    }
+
+    void CS122_App::create_content_area()
+    {
+        content_area = lv_obj_create(lv_screen_active());
+
+        lv_obj_set_size(content_area, 480, 190);
+        lv_obj_set_pos(content_area, 0, 40);
+    }
+
+    void CS122_App::create_nav_bar()
+    {
+        nav_bar = lv_obj_create(lv_screen_active());
+
+        lv_obj_set_size(nav_bar, 480, 42);
+        lv_obj_set_pos(nav_bar, 0, 230);
+
+        const char *names[] = 
+        {
+            "DASH",
+            "ZONE",
+            "LOGS",
+            "FULT",
+            "CTRL"
+        };
+
+         for(int i = 0; i < 5; i++)
+            {
+                lv_obj_t *btn = lv_button_create(nav_bar);
+
+                lv_obj_set_size(btn, 85, 30);
+                lv_obj_set_pos(btn, 5 + (95 * i), 5);
+
+                lv_obj_t *label = lv_label_create(btn);
+                lv_label_set_text(label, names[i]);
+                lv_obj_center(label);
+            }
+    }
+
+    void CS122_App::show_dashboard()
+        {
+            lv_obj_t *title = lv_label_create(content_area);
+
+            lv_label_set_text(title, "System Overview");
+
+            lv_obj_center(title);
+        }
 
     uint32_t CS122_App::loop() {
         running = true;

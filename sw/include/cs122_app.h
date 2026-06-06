@@ -20,6 +20,25 @@ namespace ucr { namespace bcoe {
         lv_tick_get_cb_t tick_callback;
         bool running;
 
+        //Dashboard elements
+        lv_obj_t* top_bar;
+        lv_obj_t* content_area;
+        lv_obj_t* nav_bar;
+
+        lv_obj_t* state_label;
+        lv_obj_t* time_label;
+        lv_obj_t* alert_label;
+
+            void create_ui();
+            void create_top_bar();
+            void create_content_area();
+            void create_nav_bar();
+
+            void show_dashboard();
+            void show_zones();
+            void show_log();
+            void show_faults();
+
     protected:
         uint32_t loop();
     };
