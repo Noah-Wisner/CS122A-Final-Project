@@ -21,8 +21,6 @@
 #include <stdbool.h>
 #include <string.h>
 
-#include <pico/stdlib.h>
-#include <pico/time.h>
 #include <hardware/spi.h>
 
 // ============================================================
