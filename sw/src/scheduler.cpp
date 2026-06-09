@@ -18,6 +18,7 @@ void scheduler_init(uint32_t gcd_period_ms) {
     s_last_tick_ms  = to_ms_since_boot(get_absolute_time());
 }
 
+
 size_t scheduler_run(Task* tasks, size_t num_tasks) {
     uint32_t now   = to_ms_since_boot(get_absolute_time());
     uint32_t delta = now - s_last_tick_ms;

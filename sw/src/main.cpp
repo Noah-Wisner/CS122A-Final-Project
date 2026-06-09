@@ -593,6 +593,7 @@ int main()
 
     gpio_init(PIN_CS);
     gpio_set_dir(PIN_CS, GPIO_OUT);
+    
 
     cs_deselect();
 
