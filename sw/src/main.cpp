@@ -53,17 +53,70 @@ void cs122_flush_cb_partial(lv_display_t * disp, const lv_area_t * area, uint8_t
     lv_display_flush_ready(disp);
 }
 
-int main(void) {
-    // Init drivers
-	stdio_init_all();
-	cyw43_arch_init();
+typedef struct task {
+    signed char state;
+    unsigned long period;
+    unsigned long elapsedTime;
+    int (*TickFct)(int);
+} task;
+
+const unsigned long GCD_PERIOD = 50;
+
+enum UI_States {UI_START,UI_RUN};
+
+int TickFct_UI(int state);
+
+task tasks[1] = {
+    { UI_START, 50, 50, &TickFct_UI }
+};
+
+ucr::bcoe::SPIDisplay* g_display = nullptr;
+ucr::bcoe::cs::cs122::CS122_App* g_app = nullptr;
+
+int main()
+{
+    stdio_init_all();
+    cyw43_arch_init();
     adc_init();
 
-    ucr::bcoe::SPIDisplay spi_display(480, 272, 10000000, 20);
-	spi_display.begin();
-	spi_display.clear();
+    g_display = new ucr::bcoe::SPIDisplay(480,272,10000000,20);
 
-    ucr::bcoe::cs::cs122::CS122_App app(&spi_display, cs122_flush_cb_partial, cs122_get_millis);
-    touch_init(26, 21, 27, 22);
-    app.run();
+    g_display->begin();
+    g_display->clear();
+
+    g_app = new ucr::bcoe::cs::cs122::CS122_App(g_display,cs122_flush_cb_partial,cs122_get_millis);
+
+    while(true)
+    {
+        for(unsigned int i = 0; i < 1; i++)
+        {
+            if(tasks[i].elapsedTime >= tasks[i].period)
+            {
+                tasks[i].state =
+                    tasks[i].TickFct(tasks[i].state);
+
+                tasks[i].elapsedTime = 0;
+            }
+
+            tasks[i].elapsedTime += GCD_PERIOD;
+        }
+        sleep_ms(GCD_PERIOD);
+    }
+}
+
+int TickFct_UI(int state)
+{
+    switch(state)
+    {
+        case UI_START:
+            g_app->init();
+            state = UI_RUN;
+            break;
+
+        case UI_RUN:
+            g_app->update();
+            break;
+    }
+
+    return state;
 }

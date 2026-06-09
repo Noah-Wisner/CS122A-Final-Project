@@ -6,7 +6,6 @@ add_subdirectory(lvgl)
 
 include_directories(include)
 include_directories(lvgl)
-include_directories(lvgl/demos)
 
 add_custom_target(sw ALL
      DEPENDS
@@ -18,13 +17,6 @@ add_executable(cs122_demo
      src/main.cpp
      src/spi_display.cpp
      src/cs122_app.cpp
-     src/lvgl_touch.cpp
-     src/lvgl_clock.cpp
-     src/lvgl_pie_chart.cpp
-     src/lvgl_compass.cpp
-     src/lvgl_arc_label.cpp
-     src/lvgl_heart_rate.cpp
-     src/lvgl_demo_widgets.cpp
 )
 
 # pull in common dependencies and additional spi hardware support

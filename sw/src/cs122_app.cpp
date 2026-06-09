@@ -4,7 +4,7 @@
 
 namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
     CS122_App::CS122_App(SPIDisplay *spi_disp, lv_display_flush_cb_t fcallback, lv_tick_get_cb_t tcallback) :
-        spi_display(spi_disp), flush_callback(fcallback), tick_callback(tcallback), running(false) {
+        spi_display(spi_disp), flush_callback(fcallback), tick_callback(tcallback) {
         lv_init();
 
         lv_tick_set_cb(tick_callback);
@@ -25,14 +25,12 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
         lv_display_set_flush_cb(display, flush_callback);
     }
 
-
-    uint32_t CS122_App::run() 
+    lv_obj_t* CS122_App::create_label(lv_obj_t* parent, const char* text, lv_align_t align, int x, int y)
     {
-        create_ui();
-
-        show_dashboard();
-
-        return loop();
+        lv_obj_t* label = lv_label_create(parent);
+        lv_label_set_text(label, text);
+        lv_obj_align(label, align,x,y); 
+        return label;
     }
 
     void CS122_App::create_ui()
@@ -41,13 +39,12 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
         lv_screen_active(),
         lv_color_hex(0x003a57),
         LV_PART_MAIN
-    );
+        );
 
         create_top_bar();
         create_content_area();
         create_nav_bar();
     }
-
 
     void CS122_App::create_top_bar()
     {
@@ -56,17 +53,9 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
         lv_obj_set_size(top_bar, 480, 40);
         lv_obj_set_pos(top_bar, 0, 0);
 
-        state_label = lv_label_create(top_bar);
-        lv_label_set_text(state_label, "DISARMED");
-        lv_obj_align(state_label, LV_ALIGN_LEFT_MID, 10, 0);
-
-        time_label = lv_label_create(top_bar);
-        lv_label_set_text(time_label, "14:03");
-        lv_obj_align(time_label, LV_ALIGN_CENTER, 0, 0);
-
-        alert_label = lv_label_create(top_bar);
-        lv_label_set_text(alert_label, "Alerts: 0");
-        lv_obj_align(alert_label, LV_ALIGN_RIGHT_MID, -10, 0);
+        state_label = create_label(top_bar, "DISARMED", LV_ALIGN_LEFT_MID,10, 0);
+        time_label = create_label(top_bar, "14:03", LV_ALIGN_CENTER, 0, 0);
+        alert_label = create_label(top_bar, "Alerts: 0", LV_ALIGN_RIGHT_MID, -10, 0);
     }
 
     void CS122_App::create_content_area()
@@ -98,7 +87,7 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
                 lv_obj_t *btn = lv_button_create(nav_bar);
 
                 lv_obj_set_size(btn, 85, 30);
-                lv_obj_set_pos(btn, 5 + (95 * i), 5);
+                lv_obj_set_pos(btn, -10 + (95 * i), -10);
 
                 lv_obj_t *label = lv_label_create(btn);
                 lv_label_set_text(label, names[i]);
@@ -107,20 +96,115 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
     }
 
     void CS122_App::show_dashboard()
-        {
-            lv_obj_t *title = lv_label_create(content_area);
+    {
+        lv_obj_clean(content_area);
+        dashboard_view = lv_obj_create(content_area);
 
-            lv_label_set_text(title, "System Overview");
+        lv_obj_set_size(dashboard_view, 460, 170);
+        lv_obj_center(dashboard_view);
 
-            lv_obj_center(title);
-        }
+        //Dashboard Title
+        create_label(dashboard_view, "System Overview", LV_ALIGN_TOP_MID, 0, 5);
 
-    uint32_t CS122_App::loop() {
-        running = true;
-        while(running) {
-            lv_timer_handler();
-            sleep_ms(5);  /*Wait 5 milliseconds before processing LVGL timer again*/
-        }
-        return 0;
+        //Zone Status
+        create_label( dashboard_view, "Zones", LV_ALIGN_TOP_LEFT, 10, 35 );
+        create_label( dashboard_view, "Zone 1 : OK", LV_ALIGN_TOP_LEFT, 20, 60 );
+        create_label( dashboard_view, "Zone 2 : OK", LV_ALIGN_TOP_LEFT, 20, 80 );
+        create_label( dashboard_view, "Zone 3 : OK", LV_ALIGN_TOP_LEFT, 20, 100 );
+
+        //fault section
+        create_label( dashboard_view, "Active Faults", LV_ALIGN_TOP_RIGHT, -20, 35 );
+        create_label( dashboard_view, "Zone 2 Offline", LV_ALIGN_TOP_RIGHT, 0, 60 );
     }
-}}}} 
+
+    void CS122_App::show_zones()
+{
+    lv_obj_clean(content_area);
+
+    zone_view = lv_obj_create(content_area);
+
+    lv_obj_set_size(zone_view, 460, 170);
+    lv_obj_center(zone_view);
+
+    // Zone Title
+    create_label(
+        zone_view,
+        "Zone 1",
+        LV_ALIGN_TOP_MID,
+        0,
+        5
+    );
+
+    // Status
+    create_label(
+        zone_view,
+        "Status: OK",
+        LV_ALIGN_TOP_LEFT,
+        10,
+        35
+    );
+
+    // Sensors Header
+    create_label(
+        zone_view,
+        "Sensors",
+        LV_ALIGN_TOP_LEFT,
+        10,
+        65
+    );
+
+    // Sensor Values
+    create_label(
+        zone_view,
+        "Door: Closed",
+        LV_ALIGN_TOP_LEFT,
+        20,
+        90
+    );
+
+    create_label(
+        zone_view,
+        "Motion: Clear",
+        LV_ALIGN_TOP_LEFT,
+        20,
+        110
+    );
+
+    create_label(
+        zone_view,
+        "Temperature: 24C",
+        LV_ALIGN_TOP_LEFT,
+        20,
+        130
+    );
+
+    // Last Event
+    create_label(
+        zone_view,
+        "Last Event:",
+        LV_ALIGN_TOP_RIGHT,
+        -20,
+        65
+    );
+
+    create_label(
+        zone_view,
+        "Door Opened",
+        LV_ALIGN_TOP_RIGHT,
+        -20,
+        90
+    );
+}
+
+    void CS122_App::init()
+    {
+        create_ui();
+        show_dashboard();
+    }
+
+    void CS122_App::update()
+    {
+    lv_timer_handler();
+    }
+
+}}}}
