@@ -5,11 +5,13 @@
 //
 //  Owns:
 //    - MCP2515 CAN Receive
-//    - Event Queue
+//    - Event Queue (with EVENT_ZONE_CLEARED)
 //    - Security State Machine
+//    - Heartbeat Watchdog
 //    - Logger
 //    - UI Stub
 //    - Touch Stub
+//    - Buzzer Task
 //    - Scheduler Task Table
 //
 // ============================================================
@@ -33,6 +35,11 @@
 #define PIN_SCK  18
 #define PIN_MOSI 19
 #define PIN_INT  20
+#define PIN_BUZZER 21
+
+// Zone 0 is mapped to the sensor node on CAN_ID_FLAGS(0).
+// Extend NUM_ZONES and add nodes for additional zones.
+#define HEARTBEAT_TIMEOUT_MS    3000u   // zone offline if HB silent this long
 
 #define MCP_RESET  0xC0
 #define MCP_WRITE  0x02
@@ -57,8 +64,16 @@
 #define RXB1DLC  0x75
 #define RXB1D0   0x76
 
-#define CAN_ID_BUTTON  0x050
-#define CAN_ID_SENSORS 0x100
+#define CAN_ID_BUTTON       0x050
+#define CAN_ID_FLAGS(z)     (0x100 + ((z) * 0x10))  // flag byte frame per zone
+#define CAN_ID_HB(z)        (0x1A0 + ((z) * 0x10))  // dedicated heartbeat per zone
+
+// Flag bits — must match the transmitter node exactly
+#define FLAG_DOOR_OPEN  (1 << 0)
+#define FLAG_MOTION     (1 << 1)
+#define FLAG_HIGH_TEMP  (1 << 2)
+#define FLAG_LOW_TEMP   (1 << 3)
+#define FLAG_HIGH_HUM   (1 << 4)
 
 // ============================================================
 // Security System Definitions
@@ -76,17 +91,35 @@ enum SystemState
     FAULT
 };
 
+// --------------------------------------------------------
+// Fault reason — travels with the zone it describes
+// --------------------------------------------------------
+
+enum FaultType
+{
+    FAULT_NONE,
+    FAULT_HEARTBEAT_TIMEOUT,
+    FAULT_SENSOR_LOSS
+};
+
 struct ZoneStatus
 {
-    bool online = false;
+    bool      online         = false;
+    bool      motionDetected = false;
+    bool      doorOpen       = false;
+    float     temperature    = 0.0f;
+    uint32_t  lastHeartbeat  = 0;
+    FaultType fault          = FAULT_NONE;  // why it went offline
+};
 
-    bool motionDetected = false;
+// --------------------------------------------------------
+// Log entry — defined here so SecuritySystem can own the array
+// --------------------------------------------------------
 
-    bool doorOpen = false;
-
-    float temperature = 0.0f;
-
-    uint32_t lastHeartbeat = 0;
+struct LogEntry
+{
+    uint32_t timestamp;
+    char     message[64];
 };
 
 struct SecuritySystem
@@ -96,6 +129,9 @@ struct SecuritySystem
     bool alarmActive = false;
 
     ZoneStatus zones[NUM_ZONES];
+
+    LogEntry eventLog[MAX_LOG_ENTRIES];  // owned here; AddLog() writes into it
+    uint8_t  logIndex = 0;
 };
 
 SecuritySystem g_system;
@@ -112,8 +148,10 @@ enum EventType
     EVENT_DISARM,
 
     EVENT_ZONE_TRIGGERED,
+    EVENT_ZONE_CLEARED,         // motion gone / door closed — zone back to normal
 
     EVENT_HEARTBEAT_TIMEOUT,
+    EVENT_ZONE_RECOVERED,       // faulted zone came back online
 
     EVENT_ALERT_ACK
 };
@@ -162,33 +200,27 @@ bool PopEvent(Event* e)
 // Logger
 // ============================================================
 
-struct LogEntry
-{
-    uint32_t timestamp;
-
-    char message[64];
-};
-
-static LogEntry g_logs[MAX_LOG_ENTRIES];
-
-static uint8_t g_logIndex = 0;
+// NOTE: LogEntry / g_logs removed — log is owned by SecuritySystem.eventLog.
+//       AddLog() writes there directly so the UI/logger tasks have one
+//       authoritative source to read from.
 
 void AddLog(const char* msg)
 {
-    g_logs[g_logIndex].timestamp =
-        scheduler_millis();
+    uint8_t idx = g_system.logIndex;
+
+    g_system.eventLog[idx].timestamp = scheduler_millis();
 
     snprintf(
-        g_logs[g_logIndex].message,
-        sizeof(g_logs[g_logIndex].message),
+        g_system.eventLog[idx].message,
+        sizeof(g_system.eventLog[idx].message),
         "%s",
         msg
     );
 
-    g_logIndex++;
+    g_system.logIndex++;
 
-    if (g_logIndex >= MAX_LOG_ENTRIES)
-        g_logIndex = 0;
+    if (g_system.logIndex >= MAX_LOG_ENTRIES)
+        g_system.logIndex = 0;
 }
 
 
@@ -252,13 +284,36 @@ static void mcp_init_500kbps_8mhz() {
 // ============================================================
 
 
-struct CANData {
-    uint16_t dist_cm      = 0;
-    int16_t  temp_x10     = 0;
-    uint16_t hum_x10      = 0;
-    bool     button_state = false;
-};
-CANData g_can;
+// Per-zone raw flag shadow — one byte per zone, mirrors last received flags frame.
+// Useful for debug; g_system.zones[] is the authoritative state for logic.
+static uint8_t g_zoneFlags[NUM_ZONES] = {0};
+
+// Helper: bring a zone online, handling first-boot vs recovery
+static void zone_mark_online(uint8_t z)
+{
+    ZoneStatus& zone = g_system.zones[z];
+
+    if (!zone.online)
+    {
+        zone.online = true;
+
+        if (zone.fault != FAULT_NONE)
+        {
+            zone.fault = FAULT_NONE;
+            PushEvent({ EVENT_ZONE_RECOVERED, z });
+
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Zone %u recovered", z);
+            AddLog(buf);
+        }
+        else
+        {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Zone %u online", z);
+            AddLog(buf);
+        }
+    }
+}
 
 static void can_process_frame(uint8_t sidh, uint8_t sidl,
                               uint8_t dlc,  uint8_t base_reg)
@@ -270,27 +325,134 @@ static void can_process_frame(uint8_t sidh, uint8_t sidl,
     for (int i = 0; i < dlc; i++)
         d[i] = mcp_read_reg(base_reg + i);
 
-    if (id == CAN_ID_BUTTON && dlc >= 1) {
-        g_can.button_state = (d[0] == 0x01);
-        printf("Button: %s\n", g_can.button_state ? "PRESSED" : "released");
+    // --------------------------------------------------------
+    // CAN_ID_BUTTON (0x050)
+    //   Byte 0: 0x01 = pressed, 0x00 = released
+    //   Press toggles ARM <-> DISARM. Only rising edge acts.
+    // --------------------------------------------------------
+    if (id == CAN_ID_BUTTON && dlc >= 1)
+    {
+        bool pressed = (d[0] == 0x01);
 
-    } else if (id == CAN_ID_SENSORS && dlc >= 6) {
-        g_can.dist_cm  = ((uint16_t)d[0] << 8) | d[1];
-        g_can.temp_x10 = (int16_t)(((uint16_t)d[2] << 8) | d[3]);
-        g_can.hum_x10  = ((uint16_t)d[4] << 8) | d[5];
+        printf("Button: %s\n", pressed ? "PRESSED" : "released");
 
-        // Throttle serial output to ~1 Hz (bus runs at 10 Hz)
-        static uint32_t last_print = 0;
-        uint32_t now = scheduler_millis();
-        if (now - last_print >= 1000) {
-            printf("Dist: %u cm  Temp: %.1f C  Hum: %.1f%%\n",
-                   g_can.dist_cm,
-                   g_can.temp_x10 / 10.0f,
-                   g_can.hum_x10  / 10.0f);
-            last_print = now;
+        if (pressed)
+        {
+            if (g_system.state == DISARMED)
+                PushEvent({ EVENT_ARM, 0 });
+            else if (g_system.state == ARMED || g_system.state == ALERT)
+                PushEvent({ EVENT_DISARM, 0 });
+        }
+        return;
+    }
+
+    // --------------------------------------------------------
+    // CAN_ID_FLAGS(z)  (0x100, 0x110, 0x120, ...)
+    //   Byte 0: flag bitmask
+    //     Bit 0 FLAG_DOOR_OPEN  — door sensor
+    //     Bit 1 FLAG_MOTION     — ultrasonic threshold crossed
+    //     Bit 2 FLAG_HIGH_TEMP  — temp > threshold
+    //     Bit 3 FLAG_LOW_TEMP   — temp < threshold
+    //     Bit 4 FLAG_HIGH_HUM   — humidity > threshold
+    //
+    //   The sensor node pre-computes these; master just reacts.
+    //   NOTE: flags frame does NOT reset the heartbeat timer —
+    //         only the dedicated HB frame does.
+    // --------------------------------------------------------
+    for (uint8_t z = 0; z < NUM_ZONES; z++)
+    {
+        if (id == CAN_ID_FLAGS(z) && dlc >= 1)
+        {
+            uint8_t      flags    = d[0];
+            ZoneStatus&  zone     = g_system.zones[z];
+
+            zone_mark_online(z);
+
+            // --- Cache raw flags for debug ---
+            g_zoneFlags[z] = flags;
+
+            // --- Door ---
+            bool doorNow  = (flags & FLAG_DOOR_OPEN) != 0;
+            bool prevDoor = zone.doorOpen;
+            zone.doorOpen = doorNow;
+
+            if (doorNow && !prevDoor)
+            {
+                PushEvent({ EVENT_ZONE_TRIGGERED, z });
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Zone %u: door opened", z);
+                AddLog(buf);
+            }
+            else if (!doorNow && prevDoor)
+            {
+                PushEvent({ EVENT_ZONE_CLEARED, z });
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Zone %u: door closed", z);
+                AddLog(buf);
+            }
+
+            // --- Motion ---
+            bool motionNow  = (flags & FLAG_MOTION) != 0;
+            bool prevMotion = zone.motionDetected;
+            zone.motionDetected = motionNow;
+
+            if (motionNow && !prevMotion)
+            {
+                PushEvent({ EVENT_ZONE_TRIGGERED, z });
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Zone %u: motion detected", z);
+                AddLog(buf);
+            }
+            else if (!motionNow && prevMotion)
+            {
+                PushEvent({ EVENT_ZONE_CLEARED, z });
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Zone %u: motion cleared", z);
+                AddLog(buf);
+            }
+
+            // --- Throttled debug ---
+            static uint32_t last_print[NUM_ZONES] = {0};
+            uint32_t now = scheduler_millis();
+            if (now - last_print[z] >= 1000)
+            {
+                printf("Z%u flags=0x%02X | Door:%s Motion:%s HiTemp:%s LoTemp:%s HiHum:%s\n",
+                       z, flags,
+                       (flags & FLAG_DOOR_OPEN) ? "Y" : "n",
+                       (flags & FLAG_MOTION)    ? "Y" : "n",
+                       (flags & FLAG_HIGH_TEMP) ? "Y" : "n",
+                       (flags & FLAG_LOW_TEMP)  ? "Y" : "n",
+                       (flags & FLAG_HIGH_HUM)  ? "Y" : "n");
+                last_print[z] = now;
+            }
+            return;
         }
     }
+
+    // --------------------------------------------------------
+    // CAN_ID_HB(z)  (0x1A0, 0x1B0, 0x1C0, ...)
+    //   Dedicated heartbeat frame sent every ~1 s by the node.
+    //   Payload is a single 0x00 byte — only the ID matters.
+    //   This is the ONLY frame that resets lastHeartbeat.
+    // --------------------------------------------------------
+    for (uint8_t z = 0; z < NUM_ZONES; z++)
+    {
+        if (id == CAN_ID_HB(z))
+        {
+            zone_mark_online(z);
+            g_system.zones[z].lastHeartbeat = scheduler_millis();
+            printf("HB received: Zone %u  t=%lu ms\n",
+                   z, (unsigned long)scheduler_millis());
+            return;
+        }
+    }
+
+    // --------------------------------------------------------
+    // Unknown frame — log ID so we can diagnose mismatches
+    // --------------------------------------------------------
+    printf("Unknown CAN ID: 0x%03X  dlc=%u\n", id, dlc);
 }
+
 // ============================================================
 // TASK: CAN
 // ============================================================
@@ -336,8 +498,65 @@ int TickCAN(int state) {
 }
 
 // ============================================================
-// TASK: System State Machine
+// TASK: Heartbeat Watchdog
+//
+// Runs every WATCHDOG_PERIOD_MS. For every zone that has ever
+// come online, checks whether lastHeartbeat (stamped only by
+// the dedicated CAN_ID_HB frame) is stale beyond
+// HEARTBEAT_TIMEOUT_MS. Pushes EVENT_HEARTBEAT_TIMEOUT once
+// per fault — the zone.fault guard prevents repeat fires.
 // ============================================================
+
+enum WatchdogTaskState { WD_INIT, WD_RUN };
+
+int TickWatchdog(int state)
+{
+    switch (state)
+    {
+        case WD_INIT:
+            state = WD_RUN;
+            break;
+
+        case WD_RUN:
+        {
+            uint32_t now = scheduler_millis();
+
+            for (uint8_t z = 0; z < NUM_ZONES; z++)
+            {
+                ZoneStatus& zone = g_system.zones[z];
+
+                // Only watch zones that have checked in at least once
+                if (!zone.online)
+                    continue;
+
+                bool timedOut = (now - zone.lastHeartbeat) > HEARTBEAT_TIMEOUT_MS;
+
+                if (timedOut && zone.fault == FAULT_NONE)
+                {
+                    // First detection — record fault reason on the zone itself
+                    zone.online = false;
+                    zone.fault  = FAULT_HEARTBEAT_TIMEOUT;
+
+                    PushEvent({ EVENT_HEARTBEAT_TIMEOUT, z });
+
+                    char buf[64];
+                    snprintf(buf, sizeof(buf),
+                             "Zone %u: heartbeat timeout", z);
+                    AddLog(buf);
+                }
+            }
+            break;
+        }
+
+        default:
+            state = WD_INIT;
+            break;
+    }
+
+    return state;
+}
+
+
 
 enum SystemTaskState
 {
@@ -345,22 +564,44 @@ enum SystemTaskState
     SYSTEM_RUN
 };
 
+// Helper: returns true if any zone still has an active trigger
+static bool AnyZoneTriggered()
+{
+    for (uint8_t z = 0; z < NUM_ZONES; z++)
+    {
+        if (g_system.zones[z].motionDetected ||
+            g_system.zones[z].doorOpen)
+            return true;
+    }
+    return false;
+}
+
+// Helper: returns true if at least one zone is currently faulted
+static bool AnyZoneFaulted()
+{
+    for (uint8_t z = 0; z < NUM_ZONES; z++)
+    {
+        if (g_system.zones[z].fault != FAULT_NONE)
+            return true;
+    }
+    return false;
+}
+
 int TickSystem(int state)
 {
     Event event;
+    char  buf[64];
 
     switch(state)
     {
         case SYSTEM_INIT:
 
-            g_system.state = DISARMED;
-
+            g_system.state       = DISARMED;
             g_system.alarmActive = false;
 
             AddLog("System Initialized");
 
             state = SYSTEM_RUN;
-
             break;
 
         case SYSTEM_RUN:
@@ -369,62 +610,143 @@ int TickSystem(int state)
             {
                 switch(event.type)
                 {
+                    // ----------------------------------------
                     case EVENT_ARM:
 
-                        g_system.state = ARMED;
-
-                        AddLog("System Armed");
-
+                        if (g_system.state == DISARMED)
+                        {
+                            g_system.state = ARMED;
+                            AddLog("System Armed");
+                        }
                         break;
 
+                    // ----------------------------------------
                     case EVENT_DISARM:
 
-                        g_system.state = DISARMED;
-
+                        g_system.state       = DISARMED;
                         g_system.alarmActive = false;
 
-                        AddLog("System Disarmed");
-
-                        break;
-
-                    case EVENT_ZONE_TRIGGERED:
-
-                        if(g_system.state == ARMED)
+                        // Clear all zone trigger flags on disarm
+                        for (uint8_t z = 0; z < NUM_ZONES; z++)
                         {
-                            g_system.state = ALERT;
-
-                            g_system.alarmActive = true;
-
-                            AddLog("Zone Triggered");
+                            g_system.zones[z].motionDetected = false;
+                            g_system.zones[z].doorOpen       = false;
                         }
 
+                        AddLog("System Disarmed");
                         break;
 
+                    // ----------------------------------------
+                    case EVENT_ZONE_TRIGGERED:
+
+                        if (g_system.state == ARMED)
+                        {
+                            g_system.state       = ALERT;
+                            g_system.alarmActive = true;
+
+                            snprintf(buf, sizeof(buf),
+                                     "ALERT: Zone %u triggered", event.zone);
+                            AddLog(buf);
+                        }
+                        else if (g_system.state == DISARMED)
+                        {
+                            // Log quietly — no alarm while disarmed
+                            snprintf(buf, sizeof(buf),
+                                     "Zone %u activity (disarmed)", event.zone);
+                            AddLog(buf);
+                        }
+                        break;
+
+                    // ----------------------------------------
+                    case EVENT_ZONE_CLEARED:
+
+                        snprintf(buf, sizeof(buf),
+                                 "Zone %u cleared", event.zone);
+                        AddLog(buf);
+
+                        // If in ALERT and ALL zones are now clear, step back
+                        // to ARMED so a fresh trigger can be distinguished.
+                        // Alarm stays active until the user ACKs.
+                        if (g_system.state == ALERT && !AnyZoneTriggered())
+                        {
+                            g_system.state = ARMED;
+                            AddLog("All zones clear — returning to ARMED");
+                        }
+                        break;
+
+                    // ----------------------------------------
                     case EVENT_HEARTBEAT_TIMEOUT:
 
-                        g_system.state = FAULT;
+                        // Zone is already marked offline by TickWatchdog.
+                        // Only escalate to system FAULT if every zone is down;
+                        // a single zone fault leaves the rest of the system
+                        // operational.
+                        snprintf(buf, sizeof(buf),
+                                 "FAULT: Zone %u heartbeat lost", event.zone);
+                        AddLog(buf);
 
-                        AddLog("Heartbeat Timeout");
-
+                        {
+                            bool allFaulted = true;
+                            for (uint8_t z = 0; z < NUM_ZONES; z++)
+                            {
+                                if (g_system.zones[z].online)
+                                {
+                                    allFaulted = false;
+                                    break;
+                                }
+                            }
+                            if (allFaulted)
+                            {
+                                g_system.state = FAULT;
+                                AddLog("All zones faulted — system FAULT");
+                            }
+                        }
                         break;
 
+                    // ----------------------------------------
+                    case EVENT_ZONE_RECOVERED:
+
+                        snprintf(buf, sizeof(buf),
+                                 "Zone %u recovered", event.zone);
+                        AddLog(buf);
+
+                        // If the system was in FAULT and no zones are faulted
+                        // anymore, recover to DISARMED. Force disarm so the
+                        // operator makes a deliberate decision to re-arm.
+                        if (g_system.state == FAULT && !AnyZoneFaulted())
+                        {
+                            g_system.state       = DISARMED;
+                            g_system.alarmActive = false;
+
+                            for (uint8_t z = 0; z < NUM_ZONES; z++)
+                            {
+                                g_system.zones[z].motionDetected = false;
+                                g_system.zones[z].doorOpen       = false;
+                            }
+
+                            AddLog("Fault cleared — system DISARMED");
+                        }
+                        break;
+
+                    // ----------------------------------------
                     case EVENT_ALERT_ACK:
 
                         g_system.alarmActive = false;
 
-                        AddLog("Alert Acknowledged");
+                        if (g_system.state == ALERT)
+                            g_system.state = ARMED;
 
+                        AddLog("Alert Acknowledged");
                         break;
 
+                    // ----------------------------------------
                     default:
                         break;
                 }
             }
-
             break;
 
         default:
-
             state = SYSTEM_INIT;
             break;
     }
@@ -549,20 +871,84 @@ int TickUI(int state)
 }
 
 // ============================================================
+// TASK: Buzzer  (Output Layer)
+//
+// Drives PIN_BUZZER based on g_system.alarmActive and state.
+//
+//   ALERT + alarmActive  → continuous tone (GPIO high)
+//   FAULT                → slow 500 ms blink to distinguish from alarm
+//   anything else        → silent (GPIO low)
+// ============================================================
+
+enum BuzzerTaskState
+{
+    BUZZER_INIT,
+    BUZZER_RUN
+};
+
+int TickBuzzer(int state)
+{
+    switch(state)
+    {
+        case BUZZER_INIT:
+
+            gpio_init(PIN_BUZZER);
+            gpio_set_dir(PIN_BUZZER, GPIO_OUT);
+            gpio_put(PIN_BUZZER, 0);
+
+            state = BUZZER_RUN;
+            break;
+
+        case BUZZER_RUN:
+        {
+            if (g_system.alarmActive &&
+                g_system.state == ALERT)
+            {
+                // Continuous on during active alarm
+                gpio_put(PIN_BUZZER, 1);
+            }
+            else if (g_system.state == FAULT)
+            {
+                // Slow blink: toggle every 500 ms
+                static uint32_t lastToggle = 0;
+                uint32_t now = scheduler_millis();
+                if (now - lastToggle >= 500)
+                {
+                    gpio_put(PIN_BUZZER,
+                             !gpio_get(PIN_BUZZER));
+                    lastToggle = now;
+                }
+            }
+            else
+            {
+                gpio_put(PIN_BUZZER, 0);
+            }
+            break;
+        }
+
+        default:
+            state = BUZZER_INIT;
+            break;
+    }
+
+    return state;
+}
+
+
+
+// ============================================================
 // Timing
 // ============================================================
 
 static const uint32_t GCD_PERIOD_MS = 10;
 
-static const uint32_t CAN_PERIOD_MS = 10;
-
-static const uint32_t SYSTEM_PERIOD_MS = 10;
-
-static const uint32_t LOGGER_PERIOD_MS = 50;
-
-static const uint32_t TOUCH_PERIOD_MS = 20;
-
-static const uint32_t UI_PERIOD_MS = 50;
+static const uint32_t CAN_PERIOD_MS      = 10;
+static const uint32_t SYSTEM_PERIOD_MS   = 10;
+static const uint32_t WATCHDOG_PERIOD_MS = 10;
+static const uint32_t LOGGER_PERIOD_MS   = 50;
+static const uint32_t TOUCH_PERIOD_MS    = 20;
+static const uint32_t UI_PERIOD_MS       = 50;
+static const uint32_t BUZZER_PERIOD_MS   = 10;
 
 // ============================================================
 // Main
@@ -611,15 +997,13 @@ int main()
 
     Task tasks[] =
     {
-        { CAN_INIT,      CAN_PERIOD_MS,      0, TickCAN },
-
-        { SYSTEM_INIT,   SYSTEM_PERIOD_MS,   0, TickSystem },
-
-        { LOGGER_INIT,   LOGGER_PERIOD_MS,   0, TickLogger },
-
-        { TOUCH_INIT,    TOUCH_PERIOD_MS,    0, TickTouch },
-
-        { UI_INIT,       UI_PERIOD_MS,       0, TickUI }
+        { CAN_INIT,      CAN_PERIOD_MS,      0, TickCAN      },
+        { SYSTEM_INIT,   SYSTEM_PERIOD_MS,   0, TickSystem   },
+        { WD_INIT,       WATCHDOG_PERIOD_MS, 0, TickWatchdog },
+        { LOGGER_INIT,   LOGGER_PERIOD_MS,   0, TickLogger   },
+        { TOUCH_INIT,    TOUCH_PERIOD_MS,    0, TickTouch    },
+        { UI_INIT,       UI_PERIOD_MS,       0, TickUI       },
+        { BUZZER_INIT,   BUZZER_PERIOD_MS,   0, TickBuzzer   },
     };
 
     const size_t NUM_TASKS =
