@@ -17,6 +17,7 @@
 // ============================================================
 
 #include "scheduler.h"
+#include "camera_task.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -31,13 +32,13 @@
 // MCP2515 / CAN Definitions
 // ============================================================
 
-#define SPI_PORT spi0
-#define PIN_MISO 16
-#define PIN_CS   17
-#define PIN_SCK  18
-#define PIN_MOSI 19
-#define PIN_INT  20
-#define PIN_BUZZER 21
+#define SPI_PORT spi1   // was spi0
+#define PIN_MISO 8      // was 16
+#define PIN_CS   9      // was 17
+#define PIN_SCK  10     // was 18
+#define PIN_MOSI 11     // was 19
+#define PIN_INT  12     // was 20
+#define PIN_BUZZER 14
 
 // Zone 0 is mapped to the sensor node on CAN_ID_FLAGS(0).
 // Extend NUM_ZONES and add nodes for additional zones.
@@ -106,10 +107,13 @@ enum FaultType
 
 struct ZoneStatus
 {
-    bool      online         = false;
-    bool      motionDetected = false;
-    bool      doorOpen       = false;
-    float     temperature    = 0.0f;
+    bool      door_open      = false;
+    bool      motion         = false;
+    bool      high_temp      = false;
+    bool      low_temp       = false;
+    bool      high_hum       = false;
+    bool      alive          = true;
+    bool      everSeen       = false;   // true once the first HB/flags frame arrives
     uint32_t  lastHeartbeat  = 0;
     FaultType fault          = FAULT_NONE;  // why it went offline
 };
@@ -295,9 +299,11 @@ static void zone_mark_online(uint8_t z)
 {
     ZoneStatus& zone = g_system.zones[z];
 
-    if (!zone.online)
+    zone.everSeen = true;   // mark seen on every contact
+
+    if (!zone.alive)
     {
-        zone.online = true;
+        zone.alive = true;
 
         if (zone.fault != FAULT_NONE)
         {
@@ -375,8 +381,8 @@ static void can_process_frame(uint8_t sidh, uint8_t sidl,
 
             // --- Door ---
             bool doorNow  = (flags & FLAG_DOOR_OPEN) != 0;
-            bool prevDoor = zone.doorOpen;
-            zone.doorOpen = doorNow;
+            bool prevDoor = zone.door_open;
+            zone.door_open = doorNow;
 
             if (doorNow && !prevDoor)
             {
@@ -395,8 +401,8 @@ static void can_process_frame(uint8_t sidh, uint8_t sidl,
 
             // --- Motion ---
             bool motionNow  = (flags & FLAG_MOTION) != 0;
-            bool prevMotion = zone.motionDetected;
-            zone.motionDetected = motionNow;
+            bool prevMotion = zone.motion;
+            zone.motion = motionNow;
 
             if (motionNow && !prevMotion)
             {
@@ -412,6 +418,11 @@ static void can_process_frame(uint8_t sidh, uint8_t sidl,
                 snprintf(buf, sizeof(buf), "Zone %u: motion cleared", z);
                 AddLog(buf);
             }
+
+            // --- Environmental flags (threshold crossed — informational) ---
+            zone.high_temp = (flags & FLAG_HIGH_TEMP) != 0;
+            zone.low_temp  = (flags & FLAG_LOW_TEMP)  != 0;
+            zone.high_hum  = (flags & FLAG_HIGH_HUM)  != 0;
 
             // --- Throttled debug ---
             static uint32_t last_print[NUM_ZONES] = {0};
@@ -528,7 +539,7 @@ int TickWatchdog(int state)
                 ZoneStatus& zone = g_system.zones[z];
 
                 // Only watch zones that have checked in at least once
-                if (!zone.online)
+                if (!zone.everSeen)
                     continue;
 
                 bool timedOut = (now - zone.lastHeartbeat) > HEARTBEAT_TIMEOUT_MS;
@@ -536,7 +547,7 @@ int TickWatchdog(int state)
                 if (timedOut && zone.fault == FAULT_NONE)
                 {
                     // First detection — record fault reason on the zone itself
-                    zone.online = false;
+                    zone.alive  = false;
                     zone.fault  = FAULT_HEARTBEAT_TIMEOUT;
 
                     PushEvent({ EVENT_HEARTBEAT_TIMEOUT, z });
@@ -571,8 +582,8 @@ static bool AnyZoneTriggered()
 {
     for (uint8_t z = 0; z < NUM_ZONES; z++)
     {
-        if (g_system.zones[z].motionDetected ||
-            g_system.zones[z].doorOpen)
+        if (g_system.zones[z].motion ||
+            g_system.zones[z].door_open)
             return true;
     }
     return false;
@@ -631,8 +642,8 @@ int TickSystem(int state)
                         // Clear all zone trigger flags on disarm
                         for (uint8_t z = 0; z < NUM_ZONES; z++)
                         {
-                            g_system.zones[z].motionDetected = false;
-                            g_system.zones[z].doorOpen       = false;
+                            g_system.zones[z].motion    = false;
+                            g_system.zones[z].door_open = false;
                         }
 
                         AddLog("System Disarmed");
@@ -691,7 +702,7 @@ int TickSystem(int state)
                             bool allFaulted = true;
                             for (uint8_t z = 0; z < NUM_ZONES; z++)
                             {
-                                if (g_system.zones[z].online)
+                                if (g_system.zones[z].alive)
                                 {
                                     allFaulted = false;
                                     break;
@@ -722,8 +733,8 @@ int TickSystem(int state)
 
                             for (uint8_t z = 0; z < NUM_ZONES; z++)
                             {
-                                g_system.zones[z].motionDetected = false;
-                                g_system.zones[z].doorOpen       = false;
+                                g_system.zones[z].motion    = false;
+                                g_system.zones[z].door_open = false;
                             }
 
                             AddLog("Fault cleared — system DISARMED");
@@ -875,11 +886,14 @@ int TickUI(int state)
 // ============================================================
 // TASK: Buzzer  (Output Layer)
 //
-// Drives PIN_BUZZER based on g_system.alarmActive and state.
+// Drives PIN_BUZZER (GPIO 14, active buzzer) based on
+// g_system.state and g_system.alarmActive:
 //
-//   ALERT + alarmActive  → continuous tone (GPIO high)
-//   FAULT                → slow 500 ms blink to distinguish from alarm
-//   anything else        → silent (GPIO low)
+//   DISARMED             → silent
+//   ARMED (just armed)   → three short confirmation beeps, then silent
+//   ALERT + alarmActive  → rapid beep every 200 ms (alarm sounding)
+//   ALERT (alarm acked)  → silent (alarmActive is false after ACK)
+//   FAULT                → slow beep every 1000 ms (maintenance alert)
 // ============================================================
 
 enum BuzzerTaskState
@@ -887,6 +901,16 @@ enum BuzzerTaskState
     BUZZER_INIT,
     BUZZER_RUN
 };
+
+// Confirmation beep sequence: 3 short beeps played once when ARMED.
+// Each beep is 100 ms on / 100 ms off. Driven by a small counter so
+// TickBuzzer doesn't block the scheduler.
+static struct
+{
+    bool        active     = false;  // sequence in progress
+    uint8_t     step       = 0;      // 0-5: on0,off0,on1,off1,on2,off2
+    uint32_t    nextChange = 0;
+} g_armBeep;
 
 int TickBuzzer(int state)
 {
@@ -903,28 +927,82 @@ int TickBuzzer(int state)
 
         case BUZZER_RUN:
         {
-            if (g_system.alarmActive &&
-                g_system.state == ALERT)
+            uint32_t    now          = scheduler_millis();
+            SystemState sysState     = g_system.state;
+            bool        alarmActive  = g_system.alarmActive;
+
+            // --------------------------------------------------
+            // Track state transitions to trigger confirmation beep
+            // --------------------------------------------------
+            static SystemState prevSysState = DISARMED;
+
+            if (sysState == ARMED && prevSysState == DISARMED)
             {
-                // Continuous on during active alarm
-                gpio_put(PIN_BUZZER, 1);
+                // Just armed — kick off confirmation beep sequence
+                g_armBeep.active     = true;
+                g_armBeep.step       = 0;
+                g_armBeep.nextChange = now;
             }
-            else if (g_system.state == FAULT)
+
+            prevSysState = sysState;
+
+            // --------------------------------------------------
+            // ALERT: rapid beep every 200 ms while alarm active
+            // --------------------------------------------------
+            if (sysState == ALERT && alarmActive)
             {
-                // Slow blink: toggle every 500 ms
-                static uint32_t lastToggle = 0;
-                uint32_t now = scheduler_millis();
-                if (now - lastToggle >= 500)
+                g_armBeep.active = false;   // cancel any pending arm beep
+
+                static uint32_t lastAlertToggle = 0;
+                if (now - lastAlertToggle >= 200)
                 {
-                    gpio_put(PIN_BUZZER,
-                             !gpio_get(PIN_BUZZER));
-                    lastToggle = now;
+                    gpio_put(PIN_BUZZER, !gpio_get(PIN_BUZZER));
+                    lastAlertToggle = now;
                 }
+                break;
             }
-            else
+
+            // --------------------------------------------------
+            // FAULT: slow beep every 1000 ms
+            // --------------------------------------------------
+            if (sysState == FAULT)
             {
-                gpio_put(PIN_BUZZER, 0);
+                g_armBeep.active = false;   // cancel any pending arm beep
+
+                static uint32_t lastFaultToggle = 0;
+                if (now - lastFaultToggle >= 1000)
+                {
+                    gpio_put(PIN_BUZZER, !gpio_get(PIN_BUZZER));
+                    lastFaultToggle = now;
+                }
+                break;
             }
+
+            // --------------------------------------------------
+            // ARMED confirmation beep sequence (3 beeps × 100 ms on/off)
+            // --------------------------------------------------
+            if (g_armBeep.active)
+            {
+                if (now >= g_armBeep.nextChange)
+                {
+                    // Even steps → buzzer ON, odd steps → buzzer OFF
+                    gpio_put(PIN_BUZZER, (g_armBeep.step % 2 == 0) ? 1 : 0);
+                    g_armBeep.step++;
+                    g_armBeep.nextChange = now + 100;
+
+                    if (g_armBeep.step >= 6)     // 3 on/off pairs complete
+                    {
+                        g_armBeep.active = false;
+                        gpio_put(PIN_BUZZER, 0);
+                    }
+                }
+                break;
+            }
+
+            // --------------------------------------------------
+            // All other states (DISARMED, ARMED+idle) → silent
+            // --------------------------------------------------
+            gpio_put(PIN_BUZZER, 0);
             break;
         }
 
@@ -951,7 +1029,7 @@ static const uint32_t LOGGER_PERIOD_MS   = 50;
 static const uint32_t TOUCH_PERIOD_MS    = 20;
 static const uint32_t UI_PERIOD_MS       = 50;
 static const uint32_t BUZZER_PERIOD_MS   = 10;
-
+static const uint32_t CAMERA_PERIOD_MS   = 3000;
 // ============================================================
 // Main
 // ============================================================
@@ -1006,7 +1084,8 @@ int main()
         { TOUCH_INIT,    TOUCH_PERIOD_MS,    0, TickTouch    },
         { UI_INIT,       UI_PERIOD_MS,       0, TickUI       },
         { BUZZER_INIT,   BUZZER_PERIOD_MS,   0, TickBuzzer   },
-    };
+        
+    }; //{ CAMERA_INIT,   CAMERA_PERIOD_MS,   0, TickCamera   }, 
 
     const size_t NUM_TASKS =
         sizeof(tasks) / sizeof(tasks[0]);
