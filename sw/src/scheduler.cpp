@@ -25,9 +25,8 @@ size_t scheduler_run(Task* tasks, size_t num_tasks) {
 
     // Only advance on a GCD boundary — same idea as the AVR
     // ISR firing once per millisecond and counting down to GCD.
-    if (delta < s_gcd_period_ms) {
-        return 0;
-    }
+    if (delta < s_gcd_period_ms) return 0;
+    
     s_last_tick_ms = now;
 
     size_t ticked = 0;

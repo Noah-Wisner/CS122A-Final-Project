@@ -94,6 +94,7 @@ float getTemp() {
 }
 
 
+
 enum DOOR_States {DOOR_START, IDLE, PRESS} door_state; 
 int TickFct_DOOR(int state); 
 
