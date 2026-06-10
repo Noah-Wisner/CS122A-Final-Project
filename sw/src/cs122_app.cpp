@@ -106,95 +106,94 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
         //Dashboard Title
         create_label(dashboard_view, "System Overview", LV_ALIGN_TOP_MID, 0, 5);
 
-        //Zone Status
+        //Zone Title
         create_label( dashboard_view, "Zones", LV_ALIGN_TOP_LEFT, 10, 35 );
-        create_label( dashboard_view, "Zone 1 : OK", LV_ALIGN_TOP_LEFT, 20, 60 );
-        create_label( dashboard_view, "Zone 2 : OK", LV_ALIGN_TOP_LEFT, 20, 80 );
-        create_label( dashboard_view, "Zone 3 : OK", LV_ALIGN_TOP_LEFT, 20, 100 );
 
-        //fault section
-        create_label( dashboard_view, "Active Faults", LV_ALIGN_TOP_RIGHT, -20, 35 );
-        create_label( dashboard_view, "Zone 2 Offline", LV_ALIGN_TOP_RIGHT, 0, 60 );
+        //Zone Summary (DYNAMIC)
+        zone_status_label = create_label(dashboard_view, "OFFLINE", LV_ALIGN_TOP_LEFT, 20, 60);
     }
 
-    void CS122_App::show_zones()
-{
-    lv_obj_clean(content_area);
 
-    zone_view = lv_obj_create(content_area);
+    void CS122_App::update_zone_status(bool online)
+    {
+        lv_label_set_text(
+            zone_status_label,
+            online ? "ONLINE" : "OFFLINE"
+        );
+    }
+    void CS122_App::update_door_status(bool open)
+    {
+        lv_label_set_text(
+            door_status_label,
+            open ? "OPEN" : "CLOSED"
+        );
+    }
 
-    lv_obj_set_size(zone_view, 460, 170);
-    lv_obj_center(zone_view);
+    void CS122_App::update_motion_status(bool detected)
+    {
+        lv_label_set_text(
+            motion_status_label,
+            detected ? "MOTION" : "CLEAR"
+        );
+    }
+    void CS122_App::update_temperature(float temperature)
+    {
+        char buffer[32];
 
-    // Zone Title
-    create_label(
-        zone_view,
-        "Zone 1",
-        LV_ALIGN_TOP_MID,
-        0,
-        5
-    );
+        snprintf(buffer, sizeof(buffer),"%.1f C", temperature);
 
-    // Status
-    create_label(
-        zone_view,
-        "Status: OK",
-        LV_ALIGN_TOP_LEFT,
-        10,
-        35
-    );
+        lv_label_set_text(temperature_label, buffer);
+    }
 
-    // Sensors Header
-    create_label(
-        zone_view,
-        "Sensors",
-        LV_ALIGN_TOP_LEFT,
-        10,
-        65
-    );
+    void CS122_App::update_alert_count(uint32_t count)
+    {
+        char buffer[32];
 
-    // Sensor Values
-    create_label(
-        zone_view,
-        "Door: Closed",
-        LV_ALIGN_TOP_LEFT,
-        20,
-        90
-    );
+        snprintf(
+            buffer,
+            sizeof(buffer),
+            "Alerts: %lu",
+            count
+        );
 
-    create_label(
-        zone_view,
-        "Motion: Clear",
-        LV_ALIGN_TOP_LEFT,
-        20,
-        110
-    );
+        lv_label_set_text(
+            alert_count_label,
+            buffer
+        );
+    }
 
-    create_label(
-        zone_view,
-        "Temperature: 24C",
-        LV_ALIGN_TOP_LEFT,
-        20,
-        130
-    );
+    void CS122_App::update_system_state(SystemState state)
+    {
+        switch(state)
+        {
+            case DISARMED:
+                lv_label_set_text(system_state_label, "DISARMED");
+                break;
 
-    // Last Event
-    create_label(
-        zone_view,
-        "Last Event:",
-        LV_ALIGN_TOP_RIGHT,
-        -20,
-        65
-    );
+            case ARMED:
+                lv_label_set_text(system_state_label, "ARMED");
+                break;
 
-    create_label(
-        zone_view,
-        "Door Opened",
-        LV_ALIGN_TOP_RIGHT,
-        -20,
-        90
-    );
-}
+            case ALERT:
+                lv_label_set_text(system_state_label, "ALERT");
+                break;
+        }
+    }
+
+    void CS122_App::refresh_dashboard(const ZoneStatus& zone, SystemState state, uint32_t alertCount)
+    {
+        update_system_state(state);
+
+        update_zone_status(zone.online);
+
+        update_door_status(zone.doorOpen);
+
+        update_motion_status(zone.motionDetected);
+
+        update_temperature(zone.temperature);
+
+        update_alert_count(alertCount);
+    }
 
     void CS122_App::init()
     {
@@ -204,7 +203,7 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
 
     void CS122_App::update()
     {
-    lv_timer_handler();
+        lv_timer_handler();
     }
 
 }}}}

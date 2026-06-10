@@ -80,7 +80,6 @@ int main()
     adc_init();
 
     g_display = new ucr::bcoe::SPIDisplay(480,272,10000000,20);
-
     g_display->begin();
     g_display->clear();
 
@@ -92,8 +91,7 @@ int main()
         {
             if(tasks[i].elapsedTime >= tasks[i].period)
             {
-                tasks[i].state =
-                    tasks[i].TickFct(tasks[i].state);
+                tasks[i].state = tasks[i].TickFct(tasks[i].state);
 
                 tasks[i].elapsedTime = 0;
             }
@@ -115,6 +113,8 @@ int TickFct_UI(int state)
 
         case UI_RUN:
             g_app->update();
+            sleep_ms(1000);
+            g_app->update_dashboard_zone(true);
             break;
     }
 

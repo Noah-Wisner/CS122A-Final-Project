@@ -13,7 +13,15 @@ namespace ucr { namespace bcoe {
         void update();
         void init();
 
-    private:
+        //Update Functions
+        void update_dashboard_zone(bool online);
+        void update_zone_status(bool online);
+        void update_door_status(bool open);
+        void update_motion_status(bool detected);
+        void update_temperature(float temp);
+        void update_system_state(SystemState state);
+    
+        private:
         SPIDisplay *spi_display;
         uint8_t *framebuffer;
         lv_display_t *display;
@@ -25,13 +33,15 @@ namespace ucr { namespace bcoe {
         lv_obj_t* content_area;
         lv_obj_t* nav_bar;
 
-        lv_obj_t* state_label;
-        lv_obj_t* time_label;
-        lv_obj_t* alert_label;
-
         //Dashboard
         lv_obj_t* dashboard_view;
-
+        lv_obj_t* system_state_label;
+        lv_obj_t* zone_status_label;
+        lv_obj_t* door_status_label;
+        lv_obj_t* motion_status_label;
+        lv_obj_t* temperature_label;
+        lv_obj_t* alert_count_label;
+        
         //Screens
         lv_obj_t* zone_view;
 
@@ -41,10 +51,8 @@ namespace ucr { namespace bcoe {
         void create_nav_bar();
 
         void show_dashboard();
-        void show_zones();
-        void show_log();
-        void show_faults();
-
+        void refresh_dashboard(const ZoneStatus& zone, SystemState state, uint32_t alertCount);
+        
         lv_obj_t* create_label(lv_obj_t* parent, const char* text, lv_align_t align, int x, int y);
 
     };
