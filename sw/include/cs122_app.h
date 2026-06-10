@@ -66,10 +66,14 @@ private:
     lv_obj_t* top_bar = nullptr;
     lv_obj_t* content_area = nullptr;
 
+    lv_obj_t* event_labels[5] = {nullptr};
+    
     //
     // Dashboard
     //
     lv_obj_t* dashboard_view = nullptr;
+    lv_obj_t* zone_panel_ptr = nullptr;
+    lv_obj_t* log_panel_ptr = nullptr;
 
     lv_obj_t* system_state_label = nullptr;
     lv_obj_t* alert_count_label = nullptr;
@@ -79,8 +83,6 @@ private:
     lv_obj_t* door_status_label = nullptr;
     lv_obj_t* motion_status_label = nullptr;
     lv_obj_t* environment_label = nullptr;
-
-    lv_obj_t* event_labels[5] = {nullptr};
 
     void create_ui();
     void create_top_bar();

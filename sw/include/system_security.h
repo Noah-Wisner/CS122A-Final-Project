@@ -52,6 +52,8 @@ struct SecuritySystem
     uint8_t logIndex;
 
     uint8_t logCount = 0;
+
+    uint8_t alertCount = 0;
     
 };
 

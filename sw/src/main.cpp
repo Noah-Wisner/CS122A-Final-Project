@@ -606,6 +606,7 @@ static SystemState StateTransition(SystemState current, Event event, uint8_t zon
     }
 }
 
+static bool alert_flag = 0;
 static void StateActions(SystemState new_state, Event event, uint8_t zone)
 {
     char buf[64];
@@ -631,13 +632,21 @@ static void StateActions(SystemState new_state, Event event, uint8_t zone)
         default: break;
     }
 
-    // --- Actions (no logging here except state transition logs are already done in TickSystem) ---
+    // --- Actions based on event type ---
     switch (event.type)
     {
         case EVENT_DISARM:
         case EVENT_ALERT_ACK:
             g_system.alarmActive = false;
             break;
+
+        // Count every zone trigger that occurs while in ALERT
+        case EVENT_ZONE_TRIGGERED:
+            if (new_state == ALERT) {
+                g_system.alertCount++;
+            }
+            break;
+
         default: break;
     }
 
@@ -654,6 +663,10 @@ static void StateActions(SystemState new_state, Event event, uint8_t zone)
             break;
         case ALERT:
             g_system.alarmActive = true;
+            if(alert_flag == 0){
+                g_system.alertCount++;
+                alert_flag = 1;
+            }
             break;
         case FAULT:
             g_system.alarmActive = false;
@@ -671,7 +684,8 @@ int TickSystem(int state)
     {
         case SYSTEM_INIT:
             current_state = DISARMED;
-            g_system.state = DISARMED;
+            g_system.state = current_state;
+            g_system.alertCount = 0;
             g_system.alarmActive = false;
             ClearAllZoneFaults();
             AddLog("System Initialized");
@@ -683,6 +697,11 @@ int TickSystem(int state)
                 SystemState next_state = StateTransition(current_state, event, event.zone);
                 if (next_state != current_state)
                 {
+                    // --- Reset alert counter when entering ALERT ---
+                    if (next_state == ALERT) {
+                        g_system.alertCount = 0;
+                    }
+
                     // Log the new state
                     const char* state_msg = "";
                     switch (next_state) 
@@ -697,7 +716,7 @@ int TickSystem(int state)
                     StateActions(next_state, event, event.zone);
                     current_state = next_state;
                     g_system.state = current_state;
-                } 
+                }
                 else 
                 {
                     StateActions(current_state, event, event.zone);
@@ -809,7 +828,7 @@ int TickUI(int state)
             break;
 
         case UI_RUN:
-            g_app->refresh_dashboard(g_system.zones[0], g_system.state, 0);
+            g_app->refresh_dashboard(g_system.zones[0], g_system.state, g_system.alertCount);
             g_app->update();
             break;
     }
