@@ -209,6 +209,18 @@ void AddLog(const char *msg) {
     if (g_system.logCount < MAX_LOG_ENTRIES) g_system.logCount++;
 }
 
+uint8_t GetLastLogEntries(LogEntry *out, uint8_t max_count) {
+    uint8_t count = (g_system.logCount < max_count) ? g_system.logCount : max_count;
+    if (count == 0) return 0;
+    // start from newest: (logIndex-1) mod MAX_LOG_ENTRIES
+    int16_t idx = (g_system.logIndex - 1 + MAX_LOG_ENTRIES) % MAX_LOG_ENTRIES;
+    for (uint8_t i = 0; i < count; i++) {
+        out[i] = g_system.eventLog[idx];
+        idx = (idx - 1 + MAX_LOG_ENTRIES) % MAX_LOG_ENTRIES;
+    }
+    return count;
+}
+
 
 
 // ============================================================
@@ -281,13 +293,11 @@ static void zone_mark_online(uint8_t z)
 
             char buf[64];
             snprintf(buf, sizeof(buf), "Zone %u recovered", z);
-            AddLog(buf);
         }
         else
         {
             char buf[64];
             snprintf(buf, sizeof(buf), "Zone %u online", z);
-            AddLog(buf);
         }
     }
 }
@@ -357,14 +367,12 @@ static void can_process_frame(uint8_t sidh, uint8_t sidl, uint8_t dlc,  uint8_t 
                 PushEvent({ EVENT_ZONE_TRIGGERED, z });
                 char buf[64];
                 snprintf(buf, sizeof(buf), "Zone %u: door opened", z);
-                AddLog(buf);
             }
             else if (!doorNow && prevDoor)
             {
                 PushEvent({ EVENT_ZONE_CLEARED, z });
                 char buf[64];
                 snprintf(buf, sizeof(buf), "Zone %u: door closed", z);
-                AddLog(buf);
             }
 
             // --- Motion ---
@@ -377,14 +385,12 @@ static void can_process_frame(uint8_t sidh, uint8_t sidl, uint8_t dlc,  uint8_t 
                 PushEvent({ EVENT_ZONE_TRIGGERED, z });
                 char buf[64];
                 snprintf(buf, sizeof(buf), "Zone %u: motion detected", z);
-                AddLog(buf);
             }
             else if (!motionNow && prevMotion)
             {
                 PushEvent({ EVENT_ZONE_CLEARED, z });
                 char buf[64];
                 snprintf(buf, sizeof(buf), "Zone %u: motion cleared", z);
-                AddLog(buf);
             }
 
             // --- Throttled debug ---
@@ -604,74 +610,55 @@ static void StateActions(SystemState new_state, Event event, uint8_t zone)
 {
     char buf[64];
 
-    // Actions that depend on the event (logging, one‑time triggers)
-    switch (event.type)
-    {
-        case EVENT_ARM:
-            AddLog("System Armed");
-            break;
-
-        case EVENT_DISARM:
-            g_system.alarmActive = false;
-            AddLog("System Disarmed");
-            break;
-
+    // --- Log zone events only once (first switch) ---
+    switch (event.type) {
         case EVENT_ZONE_TRIGGERED:
             snprintf(buf, sizeof(buf), "Zone %u triggered", zone);
             AddLog(buf);
             break;
-
         case EVENT_ZONE_CLEARED:
             snprintf(buf, sizeof(buf), "Zone %u cleared", zone);
             AddLog(buf);
             break;
-
-        case EVENT_ALERT_ACK:
-            g_system.alarmActive = false;
-            AddLog("Alert Acknowledged");
-            break;
-
         case EVENT_HEARTBEAT_TIMEOUT:
-            snprintf(buf, sizeof(buf), "Zone %u heartbeat lost → FAULT", zone);
+            snprintf(buf, sizeof(buf), "Zone %u offline", zone);
             AddLog(buf);
             break;
-
         case EVENT_ZONE_RECOVERED:
             snprintf(buf, sizeof(buf), "Zone %u recovered", zone);
             AddLog(buf);
             break;
-
-        default:
-            break;
+        default: break;
     }
 
-    // Actions that depend on the new state
+    // --- Actions (no logging here except state transition logs are already done in TickSystem) ---
+    switch (event.type)
+    {
+        case EVENT_DISARM:
+        case EVENT_ALERT_ACK:
+            g_system.alarmActive = false;
+            break;
+        default: break;
+    }
+
+    // --- New state actions (no logging) ---
     switch (new_state)
     {
         case DISARMED:
-            // Clear any leftover alarm flag and zone fault flags
             g_system.alarmActive = false;
             ClearAllZoneFaults();
-            // Also clear sensor flags (door_open, motion) – they will be
-            // repopulated by the next CAN flags frame.
-            for (uint8_t z = 0; z < NUM_ZONES; z++)
-            {
+            for (uint8_t z = 0; z < NUM_ZONES; z++) {
                 g_system.zones[z].door_open = false;
-                g_system.zones[z].motion    = false;
+                g_system.zones[z].motion = false;
             }
             break;
-
-        case ARMED:
-            // No alarm, no extra cleanup
-            break;
-
         case ALERT:
             g_system.alarmActive = true;
             break;
-
         case FAULT:
-            g_system.alarmActive = false;   // No siren during fault
+            g_system.alarmActive = false;
             break;
+        default: break;
     }
 }
 
@@ -696,16 +683,23 @@ int TickSystem(int state)
                 SystemState next_state = StateTransition(current_state, event, event.zone);
                 if (next_state != current_state)
                 {
-                    // State changed – perform actions for the new state
+                    // Log the new state
+                    const char* state_msg = "";
+                    switch (next_state) 
+                    {
+                        case DISARMED: state_msg = "System Disarmed"; break;
+                        case ARMED:    state_msg = "System Armed"; break;
+                        case ALERT:    state_msg = "ALERT Activated"; break;
+                        case FAULT:    state_msg = "System Fault"; break;
+                    }
+                    AddLog(state_msg);
+                    
                     StateActions(next_state, event, event.zone);
                     current_state = next_state;
                     g_system.state = current_state;
-                }
-                else
+                } 
+                else 
                 {
-                    // No state change, but we might still need to log certain events
-                    // e.g., ZONE_TRIGGERED while disarmed. We call StateActions with
-                    // the current state (no transition side effects except logging).
                     StateActions(current_state, event, event.zone);
                 }
             }

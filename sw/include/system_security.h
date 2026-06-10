@@ -43,7 +43,7 @@ struct SecuritySystem
 {
     SystemState state;
 
-    bool alarmActive;
+    bool alarmActive = false;
 
     ZoneStatus zones[NUM_ZONES];
 
@@ -51,6 +51,8 @@ struct SecuritySystem
 
     uint8_t logIndex;
 
-    uint8_t logCount;
+    uint8_t logCount = 0;
     
 };
+
+uint8_t GetLastLogEntries(LogEntry *out, uint8_t max_count);

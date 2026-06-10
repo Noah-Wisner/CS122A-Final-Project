@@ -82,149 +82,47 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
         lv_obj_clean(content_area);
 
         dashboard_view = lv_obj_create(content_area);
-
-        lv_obj_clear_flag(dashboard_view,LV_OBJ_FLAG_SCROLLABLE);
-
-        lv_obj_set_size(
-            dashboard_view,
-            470,
-            220
-        );
-
+        lv_obj_clear_flag(dashboard_view, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(dashboard_view, 470, 220);
         lv_obj_center(dashboard_view);
 
-        //
-        // Alarm Status
-        //
-        create_label(
-            dashboard_view,
-            "ALARM:",
-            LV_ALIGN_TOP_RIGHT,
-            -120,
-            10
-        );
+        // --- Alarm Status (top right) ---
+        create_label(dashboard_view, "ALARM:", LV_ALIGN_TOP_RIGHT, -120, 10);
+        alarm_status_label = create_label(dashboard_view, "OFF", LV_ALIGN_TOP_RIGHT, -40, 10);
 
-        alarm_status_label =
-            create_label(
-                dashboard_view,
-                "OFF",
-                LV_ALIGN_TOP_RIGHT,
-                -40,
-                10
-            );
-
-        //
-        // Zone Panel
-        //
+        // --- Zone Panel ---
         lv_obj_t* zone_panel = lv_obj_create(dashboard_view);
+        lv_obj_set_size(zone_panel, 210, 130);      // a little taller to fit ENV row
+        lv_obj_set_pos(zone_panel, 0, 35);
+        lv_obj_clear_flag(zone_panel, LV_OBJ_FLAG_SCROLLABLE);
 
-        lv_obj_set_size(zone_panel, 210, 110);
-        lv_obj_set_pos(zone_panel, 10, 35);
+        // Title
+        create_label(zone_panel, "ZONE 1", LV_ALIGN_TOP_MID, 0, 5);
 
-        lv_obj_clear_flag(zone_panel,LV_OBJ_FLAG_SCROLLABLE);
+        // Static labels (left column)
+        create_label(zone_panel, "CONNECTION:", LV_ALIGN_TOP_LEFT, 0, 30);
+        create_label(zone_panel, "DOOR:",       LV_ALIGN_TOP_LEFT, 0, 50);
+        create_label(zone_panel, "MOTION:",     LV_ALIGN_TOP_LEFT, 0, 70);
+        create_label(zone_panel, "ENV:",        LV_ALIGN_TOP_LEFT, 0, 90);
 
-        create_label(
-            zone_panel,
-            "ZONE 1",
-            LV_ALIGN_TOP_MID,
-            0,
-            5
-        );
+        // Dynamic labels (right column)
+        zone_status_label   = create_label(zone_panel, "ONLINE", LV_ALIGN_TOP_LEFT, 110, 30);
+        door_status_label   = create_label(zone_panel, "CLOSED", LV_ALIGN_TOP_LEFT, 110, 50);
+        motion_status_label = create_label(zone_panel, "CLEAR",  LV_ALIGN_TOP_LEFT, 110, 70);
+        environment_label   = create_label(zone_panel, "NORMAL", LV_ALIGN_TOP_LEFT, 110, 90);
 
-        create_label(
-            zone_panel,
-            "CONNECTION:",
-            LV_ALIGN_TOP_LEFT,
-            10,
-            30
-        );
-
-        zone_status_label =
-            create_label(
-                zone_panel,
-                "ONLINE",
-                LV_ALIGN_TOP_LEFT,
-                90,
-                30
-            );
-
-        create_label(
-            zone_panel,
-            "DOOR:",
-            LV_ALIGN_TOP_LEFT,
-            10,
-            50
-        );
-
-        door_status_label =
-            create_label(
-                zone_panel,
-                "CLOSED",
-                LV_ALIGN_TOP_LEFT,
-                90,
-                50
-            );
-
-        create_label(
-            zone_panel,
-            "MOTION:",
-            LV_ALIGN_TOP_LEFT,
-            10,
-            70
-        );
-
-        motion_status_label =
-            create_label(
-                zone_panel,
-                "CLEAR",
-                LV_ALIGN_TOP_LEFT,
-                90,
-                70
-            );
-
-        create_label(
-            zone_panel,
-            "ENV:",
-            LV_ALIGN_TOP_LEFT,
-            10,
-            90
-        );
-
-        environment_label =
-            create_label(
-                zone_panel,
-                "NORMAL",
-                LV_ALIGN_TOP_LEFT,
-                90,
-                90
-            );
-
-        //
-        // Event Log
-        //
+        // --- Event Log Panel ---
         lv_obj_t* log_panel = lv_obj_create(dashboard_view);
-
         lv_obj_set_size(log_panel, 220, 160);
         lv_obj_set_pos(log_panel, 235, 35);
 
-        create_label(
-            log_panel,
-            "RECENT EVENTS",
-            LV_ALIGN_TOP_MID,
-            0,
-            5
-        );
+        create_label(log_panel, "RECENT EVENTS", LV_ALIGN_TOP_MID, 0, 5);
 
-        for(int i = 0; i < 5; i++)
-        {
-            event_labels[i] =
-                create_label(
-                    log_panel,
-                    "---",
-                    LV_ALIGN_TOP_LEFT,
-                    10,
-                    30 + (22 * i)
-                );
+        // Use left alignment for log entries (more readable)
+        for (int i = 0; i < 5; i++) {
+            event_labels[i] = lv_label_create(log_panel);
+            lv_label_set_text(event_labels[i], "---");
+            lv_obj_align(event_labels[i], LV_ALIGN_TOP_LEFT, 10, 30 + (22 * i));
         }
     }
 
@@ -370,11 +268,7 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
         );
     }
 
-    void CS122_App::refresh_dashboard(
-        const ZoneStatus& zone,
-        SystemState state,
-        uint32_t alertCount
-    )
+    void CS122_App::refresh_dashboard(const ZoneStatus& zone, SystemState state, uint32_t alertCount)
     {
         update_system_state(state);
 
@@ -384,18 +278,23 @@ namespace ucr { namespace bcoe { namespace cs { namespace cs122 {
 
         update_motion_status(zone.motion);
 
-        update_environment_status(
-            zone.high_temp,
-            zone.low_temp,
-            zone.high_hum
-        );
+        update_environment_status(zone.high_temp,zone.low_temp,zone.high_hum);
 
         update_alert_count(alertCount);
 
-        update_alarm_status(
-            state == ALERT
-        );
+        update_alarm_status(state == ALERT);
+
+        LogEntry recent[5];
+        uint8_t count = GetLastLogEntries(recent, 5);
+        for (int i = 0; i < 5; i++) 
+        {
+            const char *text = (i < count) ? recent[i].message : "---";
+            lv_label_set_text(event_labels[i], text);
+        }
+
+        lv_obj_invalidate(dashboard_view);
     }
+    
     void CS122_App::init()
     {
         create_ui();
