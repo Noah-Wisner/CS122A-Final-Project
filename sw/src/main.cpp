@@ -360,19 +360,20 @@ static void can_process_frame(uint8_t sidh, uint8_t sidl, uint8_t dlc,  uint8_t 
             // --- Door ---
             bool doorNow  = (flags & FLAG_DOOR_OPEN) != 0;
             bool prevDoor = zone.door_open;
-            zone.door_open = doorNow;
 
             if (doorNow && !prevDoor)
             {
                 PushEvent({ EVENT_ZONE_TRIGGERED, z });
                 char buf[64];
                 snprintf(buf, sizeof(buf), "Zone %u: door opened", z);
+                zone.door_open = true;
             }
             else if (!doorNow && prevDoor)
             {
                 PushEvent({ EVENT_ZONE_CLEARED, z });
                 char buf[64];
                 snprintf(buf, sizeof(buf), "Zone %u: door closed", z);
+                zone.door_open = false;
             }
 
             // --- Motion ---
@@ -391,6 +392,41 @@ static void can_process_frame(uint8_t sidh, uint8_t sidl, uint8_t dlc,  uint8_t 
                 PushEvent({ EVENT_ZONE_CLEARED, z });
                 char buf[64];
                 snprintf(buf, sizeof(buf), "Zone %u: motion cleared", z);
+            }
+
+            //--- Humidity and Temperature)
+            bool highTempNow = (flags & FLAG_HIGH_TEMP) != 0;
+            bool lowTempNow  = (flags & FLAG_LOW_TEMP)  != 0;
+            bool highHumNow  = (flags & FLAG_HIGH_HUM)  != 0;
+
+            if (highTempNow != zone.high_temp)
+            {
+                zone.high_temp = highTempNow;
+                if (highTempNow) {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "Zone %u: high temperature", z);
+                    AddLog(buf);
+                }
+            }
+            if (lowTempNow != zone.low_temp)
+            {
+                zone.low_temp = lowTempNow;
+                if (lowTempNow) 
+                {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "Zone %u: low temperature", z);
+                    AddLog(buf);
+                }
+            }
+            if (highHumNow != zone.high_hum)
+            {
+                zone.high_hum = highHumNow;
+                if (highHumNow) 
+                {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "Zone %u: high humidity", z);
+                    AddLog(buf);
+                }
             }
 
             // --- Throttled debug ---
@@ -555,9 +591,9 @@ static void ClearAllZoneFaults()
     for (uint8_t z = 0; z < NUM_ZONES; z++)
     {
         g_system.zones[z].fault = FAULT_NONE;
-        g_system.zones[z].alive = true;     // Assume recovered
+        g_system.zones[z].alive = false;
         g_system.zones[z].lastHeartbeat = scheduler_millis();
-        // Do NOT clear door_open or motion – those are sensor state,
+        // lastHeartbeat will be set when first message arrives
         // they will be updated by next CAN flags frame.
     }
 }
@@ -838,12 +874,6 @@ int TickUI(int state)
 
 // ============================================================
 // TASK: Buzzer  (Output Layer)
-//
-// Drives PIN_BUZZER based on g_system.alarmActive and state.
-//
-//   ALERT + alarmActive  -> continuous tone (GPIO high)
-//   FAULT                -> slow 500 ms blink to distinguish from alarm
-//   anything else        -> silent (GPIO low)
 // ============================================================
 
 enum BuzzerTaskState
@@ -967,11 +997,7 @@ int TickDebug(int state)
 
                     g_system.zones[0].motion = true;
 
-                    PushEvent(
-                    {
-                        EVENT_ZONE_TRIGGERED,
-                        0
-                    });
+                    PushEvent({EVENT_ZONE_TRIGGERED,0});
 
                     break;
 
@@ -985,11 +1011,7 @@ int TickDebug(int state)
                     g_system.zones[0].motion = false;
                     g_system.zones[0].door_open = false;
 
-                    PushEvent(
-                    {
-                        EVENT_ZONE_CLEARED,
-                        0
-                    });
+                    PushEvent({EVENT_ZONE_CLEARED,0});
 
                     break;
 
@@ -999,11 +1021,7 @@ int TickDebug(int state)
                 case 'k':
                     printf("[DEBUG] Inject EVENT_ALERT_ACK\n");
 
-                    PushEvent(
-                    {
-                        EVENT_ALERT_ACK,
-                        0
-                    });
+                    PushEvent({EVENT_ALERT_ACK,0});
 
                     break;
 
@@ -1021,11 +1039,7 @@ int TickDebug(int state)
                             FAULT_HEARTBEAT_TIMEOUT;
                     }
 
-                    PushEvent(
-                    {
-                        EVENT_HEARTBEAT_TIMEOUT,
-                        0
-                    });
+                    PushEvent({EVENT_HEARTBEAT_TIMEOUT,0});
 
                     break;
 
@@ -1042,11 +1056,7 @@ int TickDebug(int state)
                         g_system.zones[z].fault = FAULT_NONE;
                     }
 
-                    PushEvent(
-                    {
-                        EVENT_ZONE_RECOVERED,
-                        0
-                    });
+                    PushEvent({EVENT_ZONE_RECOVERED,0});
 
                     break;
 
@@ -1074,7 +1084,7 @@ static const uint32_t CAN_PERIOD_MS      = 10;
 static const uint32_t SYSTEM_PERIOD_MS   = 10;
 static const uint32_t WATCHDOG_PERIOD_MS = 100;
 static const uint32_t LOGGER_PERIOD_MS   = 50;
-// static const uint32_t TOUCH_PERIOD_MS    = 200;
+static const uint32_t TOUCH_PERIOD_MS    = 200;
 static const uint32_t UI_PERIOD_MS       = 100;
 static const uint32_t BUZZER_PERIOD_MS   = 100;
 static const uint32_t DEBUG_MS           = 100;
@@ -1136,9 +1146,9 @@ int main()
 
     Task tasks[] =
     {
-        //{ CAN_INIT,      CAN_PERIOD_MS,      0, TickCAN      },
+        { CAN_INIT,      CAN_PERIOD_MS,      0, TickCAN      },
         { SYSTEM_INIT,   SYSTEM_PERIOD_MS,   0, TickSystem   },
-        //{ WD_INIT,       WATCHDOG_PERIOD_MS, 0, TickWatchdog },
+        { WD_INIT,       WATCHDOG_PERIOD_MS, 0, TickWatchdog },
         { LOGGER_INIT,   LOGGER_PERIOD_MS,   0, TickLogger   },
         //{ TOUCH_INIT,    TOUCH_PERIOD_MS,    0, TickTouch    },
         { UI_INIT,       UI_PERIOD_MS,       0, TickUI       },
